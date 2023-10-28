@@ -162,23 +162,49 @@ typedef struct __attribute__((packed, aligned(1))) {
 	int16_t r_y;
 	uint8_t reserved_1[6];
 } ReportDataXinput;
-ReportDataXinput XboxButtonData;
+ReportDataXinput XboxButtonData;      // data to send
+ReportDataXinput prevXboxButtonData;  // data sent last time
 
 
 /********* Code ***************/
 
-const uint8_t endpoint_in = 0x81;
+bool inputChanged()
+{
+  if(XboxButtonData.digital_buttons_1 != prevXboxButtonData.digital_buttons_1)
+    return true;
+  if(XboxButtonData.digital_buttons_2 != prevXboxButtonData.digital_buttons_2)
+    return true;
+  if(XboxButtonData.lt != prevXboxButtonData.lt)
+    return true;
+  if(XboxButtonData.rt != prevXboxButtonData.rt)
+    return true;
+  if(XboxButtonData.l_x != prevXboxButtonData.l_x)
+    return true;
+  if(XboxButtonData.l_y != prevXboxButtonData.l_y)
+    return true;
+  if(XboxButtonData.r_x != prevXboxButtonData.r_x)
+    return true;
+  if(XboxButtonData.r_y != prevXboxButtonData.r_y)
+    return true;
 
+  return false;
+}
+
+const uint8_t endpoint_in = 0x81;
 void sendReportData() 
 {
   if(endpoint_in == 0)
+    return;
+
+  if(!inputChanged())
     return;
 
   // Poll every 4ms
   const unsigned long interval_ms = 4;
   static unsigned long start_ms = 0;
 
-  if (millis() - start_ms < interval_ms) return;  // not enough time
+  if (millis() - start_ms < interval_ms) 
+    return;
   start_ms += interval_ms;
 
   // Remote wakeup
@@ -187,18 +213,19 @@ void sendReportData()
     tud_remote_wakeup();
   }
 
-  if(usbd_edpt_busy(0, endpoint_in))
-    digitalWrite(LED_BUILTIN, HIGH);
-  else
-    digitalWrite(LED_BUILTIN, LOW);
-
+  XboxButtonData.rid = 0;
   XboxButtonData.rsize = 20;
+  for(int8_t i = 0; i < 6; ++i)
+    XboxButtonData.reserved_1[i] = 0;
+
   if (tud_ready()  && !usbd_edpt_busy(0, endpoint_in))
   {
     usbd_edpt_claim(0, endpoint_in);
     usbd_edpt_xfer(0, endpoint_in, (uint8_t*)&XboxButtonData, 20);
     usbd_edpt_release(0, endpoint_in);
-  }   
+
+    prevXboxButtonData = XboxButtonData;
+  }
 }
 
 static void xinput_init() 
@@ -259,11 +286,8 @@ const usbd_class_driver_t *usbd_app_driver_get_cb(uint8_t *driver_count)
   return &xinput_driver;
 }
 
-
-void setup() 
+void resetReportStruct()
 {
-  pinMode(LED_BUILTIN, OUTPUT);
-
   XboxButtonData.rid = 0;
   XboxButtonData.rsize = 20;
   XboxButtonData.digital_buttons_1 = 0;
@@ -274,23 +298,39 @@ void setup()
   XboxButtonData.l_y = 0;
   XboxButtonData.r_x = 0;
   XboxButtonData.r_y = 0;
-  for(int8_t i = 0; i < 6; ++i)
-    XboxButtonData.reserved_1[i] = 0;
+}
+
+void setup() 
+{
+  pinMode(0, INPUT_PULLUP);
+
+  resetReportStruct();
+  prevXboxButtonData = XboxButtonData;
 
   tusb_init();
-  delay(500);
+  delay(1000);
 }
 
 void loop() 
 {
+  // tinyusb task handler
   tud_task_ext(0, false);
 
+  //inputs
+  resetReportStruct();
+
+  // spin left joystick when BOOT button pressed
+  if(digitalRead(0) == LOW)
+  {
+    float t = float(millis()) / 1000.0f;
+    int16_t x = (int16_t)(cos(t) * 32767.0f);
+    int16_t y = (int16_t)(sin(t) * 32767.0f);
+    XboxButtonData.l_x = x;
+    XboxButtonData.l_y = y;
+  }
+
+  // send inputs
   sendReportData();
   
   delay(1);
-
-  float t = float(millis()) / 1000.0f;
-  int16_t x = (int16_t)(sin(t) * 32767.0f);
-  XboxButtonData.l_x = x;
-  XboxButtonData.l_y = x;
 }
